@@ -98,6 +98,89 @@ char * parseWebSocketPkt(char *data,int len,uint32_t *returnLen)
   }
   
 }
+#define WS_READ_WAIT 0
+#define WS_READ_HEAD 1
+#define WS_READ_LEN16BIT_MSB 2
+#define WS_READ_LEN16BIT_LSB 3
+#define WS_READ_DATA_FIRST 4
+#define WS_READ_DATA 5
+
+
+void wsReadSM(void)
+{
+	static uint8_t state = WS_READ_WAIT;
+  uint8_t readBuff[1024];
+  uint16_t readPos=0;
+  int16_t readLen=0;
+
+  static uint8_t *dataBuff;
+  static uint16_t dataPos=0;
+  static uint16_t packetLen;
+  static uint8_t purgePacket = 0;
+  static uint8_t maskedPacket = 0;
+
+	readLen=read(gSockfd,readBuff,1024);
+	printf("read %d\n",readLen);
+	while(readPos < readLen)
+	{
+		printf("state = %d readPos = %d\n",state,readPos);
+	switch(state)
+	{
+		case WS_READ_WAIT:			
+      purgePacket = 0;
+			if((readBuff[readPos]&0x80)==0)
+        purgePacket = 1;
+      if((readBuff[readPos]&0x0F)!=WS_OP_BIN)
+				purgePacket = 1;
+			state=WS_READ_HEAD;
+		break;
+		case WS_READ_HEAD:
+      if((readBuff[readPos]&0x80)==0x80) //masked
+				maskedPacket = 1;
+ 			else
+				maskedPacket = 0;
+			if((readBuff[readPos]&0x7F)==0x7E) //16 bit len
+				state = WS_READ_LEN16BIT_MSB;
+			else
+			{
+				packetLen = (readBuff[readPos]&0x7F);
+				state = WS_READ_DATA_FIRST;
+			}
+		break;
+		case WS_READ_LEN16BIT_MSB:
+			packetLen = readBuff[readPos]*0x100;
+			state = WS_READ_LEN16BIT_LSB;
+		break;
+		case WS_READ_LEN16BIT_LSB:
+			packetLen += readBuff[readPos];
+			state = WS_READ_DATA;
+    break;
+		case WS_READ_DATA_FIRST:
+				dataBuff = malloc(packetLen);
+				dataPos = 0;
+				state = WS_READ_DATA;
+		case WS_READ_DATA:
+				dataBuff[dataPos]=readBuff[readPos];
+				dataPos++;
+				if(dataPos==packetLen)
+				{
+					//process cmd;
+					if(purgePacket || maskedPacket)
+					{
+						free(dataBuff);
+					}
+					else
+					{
+						slitherCmd(dataBuff,packetLen);
+					}
+					state = WS_READ_WAIT;
+				}
+		break;
+
+	}
+	readPos++;
+	}
+}
 char * generateWebSocketPkt(char *data, int len)
 {
 /*
@@ -191,12 +274,14 @@ int main(int argc, char *argv[])
     wsReq=generateWebSocketPkt(cmd,cmdLen);
     rcWrite=write(gSockfd,wsReq,cmdLen+2);
     printf("write = %d\n",rcWrite);
-    cmdBuff[0]=251;
+    cmdBuff[0]=251; //ping
     wsReq=generateWebSocketPkt(cmdBuff,1);
     rcWrite=write(gSockfd,wsReq,3);
     printf("write = %d\n",rcWrite);
-    rcRead=read(gSockfd,httpRsp,1024);
-    printf("read = %d\n",rcRead);
+
+		wsReadSM();
+//    rcRead=read(gSockfd,httpRsp,1024);
+//    printf("read = %d\n",rcRead);
     close(gSockfd);
     return 0;
 }
