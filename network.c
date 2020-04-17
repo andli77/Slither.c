@@ -137,6 +137,7 @@ int wsWrite(uint8_t *data,uint16_t len)
 {
  char *wsReq;
  int rcWrite;
+   printf("wsWrite call len %d\n",len);
    wsReq=generateWebSocketPkt((char*)data,len);
     rcWrite=write(gSockfd,wsReq,len+2);
    printf("rcWrite = %d\n",rcWrite);
@@ -152,7 +153,6 @@ void hexDump(uint8_t *buff,int len)
       printf("\n");
     printf("%02X ",(uint8_t)buff[i]);
   }
-  printf("hi!\n");
 } 
 int main(int argc, char *argv[])
 {
@@ -160,9 +160,11 @@ int main(int argc, char *argv[])
     char httpRsp[1024];
     char *httpReq;
     char *wsReq;
+    uint16_t cmdLen;
     char *srvCmd;
     uint32_t srvLen;
     char cmdBuff[16];
+    char *cmd;
     if (argc < 3) {
        fprintf(stderr,"usage %s hostname port\n", argv[0]);
        exit(0);
@@ -185,7 +187,16 @@ int main(int argc, char *argv[])
     printf("read = %d\n",rcRead);
     srvCmd = parseWebSocketPkt(httpRsp,rcRead,&srvLen);
     slitherCmd((uint8_t*)srvCmd,srvLen);
-
+    cmd=(char*)slitherSetUsername("BigBadSnake",3,&cmdLen);
+    wsReq=generateWebSocketPkt(cmd,cmdLen);
+    rcWrite=write(gSockfd,wsReq,cmdLen+2);
+    printf("write = %d\n",rcWrite);
+    cmdBuff[0]=251;
+    wsReq=generateWebSocketPkt(cmdBuff,1);
+    rcWrite=write(gSockfd,wsReq,3);
+    printf("write = %d\n",rcWrite);
+    rcRead=read(gSockfd,httpRsp,1024);
+    printf("read = %d\n",rcRead);
     close(gSockfd);
     return 0;
 }
