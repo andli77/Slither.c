@@ -104,9 +104,10 @@ char * parseWebSocketPkt(char *data,int len,uint32_t *returnLen)
 #define WS_READ_LEN16BIT_LSB 3
 #define WS_READ_DATA_FIRST 4
 #define WS_READ_DATA 5
+#define WS_READ_LEN64BIT 6
 
 
-void wsReadSM(void)
+int  wsReadSM(void)
 {
 	static uint8_t state = WS_READ_WAIT;
   uint8_t readBuff[1024];
@@ -115,15 +116,17 @@ void wsReadSM(void)
 
   static uint8_t *dataBuff;
   static uint16_t dataPos=0;
-  static uint16_t packetLen;
+  static uint32_t packetLen;
   static uint8_t purgePacket = 0;
   static uint8_t maskedPacket = 0;
-
+	static uint8_t pos64bitlen=0;
 	readLen=read(gSockfd,readBuff,1024);
 	printf("read %d\n",readLen);
+  if(readLen <= 0)
+		return -1;
 	while(readPos < readLen)
 	{
-		printf("state = %d readPos = %d\n",state,readPos);
+//		printf("state = %d readPos = %d\n",state,readPos);
 	switch(state)
 	{
 		case WS_READ_WAIT:			
@@ -141,19 +144,32 @@ void wsReadSM(void)
 				maskedPacket = 0;
 			if((readBuff[readPos]&0x7F)==0x7E) //16 bit len
 				state = WS_READ_LEN16BIT_MSB;
+			else if((readBuff[readPos]&0x7F)==0x7F) //64 bit len
+			{
+				printf("64 bit len!!----------------------\n");
+				state = WS_READ_LEN64BIT;
+				packetLen = 0;
+				pos64bitlen=0;
+			}
 			else
 			{
 				packetLen = (readBuff[readPos]&0x7F);
 				state = WS_READ_DATA_FIRST;
 			}
 		break;
+		case WS_READ_LEN64BIT:
+			packetLen *= 0x100;
+			packetLen +=readBuff[readPos];
+			pos64bitlen++;
+			if(pos64bitlen>=8)
+				state = WS_READ_DATA_FIRST;
 		case WS_READ_LEN16BIT_MSB:
 			packetLen = readBuff[readPos]*0x100;
 			state = WS_READ_LEN16BIT_LSB;
 		break;
 		case WS_READ_LEN16BIT_LSB:
 			packetLen += readBuff[readPos];
-			state = WS_READ_DATA;
+			state = WS_READ_DATA_FIRST;
     break;
 		case WS_READ_DATA_FIRST:
 				dataBuff = malloc(packetLen);
@@ -172,6 +188,7 @@ void wsReadSM(void)
 					else
 					{
 						slitherCmd(dataBuff,packetLen);
+            free(dataBuff);
 					}
 					state = WS_READ_WAIT;
 				}
@@ -180,6 +197,7 @@ void wsReadSM(void)
 	}
 	readPos++;
 	}
+	return readLen;
 }
 char * generateWebSocketPkt(char *data, int len)
 {
@@ -279,7 +297,7 @@ int main(int argc, char *argv[])
     rcWrite=write(gSockfd,wsReq,3);
     printf("write = %d\n",rcWrite);
 
-		wsReadSM();
+		while(wsReadSM()>0);
 //    rcRead=read(gSockfd,httpRsp,1024);
 //    printf("read = %d\n",rcRead);
     close(gSockfd);
